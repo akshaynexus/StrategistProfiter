@@ -1,14 +1,20 @@
 pragma solidity >=0.7.0 <0.8.0;
-// pragma abicoder v2;
+pragma experimental ABIEncoderV2;
 import "@openzeppelin/contracts/access/Ownable.sol";
 import './interfaces/IUniswapRouter.sol';
 import './interfaces/ISharer.sol';
 import './interfaces/IStrategy.sol';
 import './interfaces/IVault.sol';
+
 interface IWETH9 is IERC20 {
     function withdraw(uint amount) external;
 }
+
 contract StrategistProfiter is Ownable {
+
+    using Address for address payable;
+    using SafeERC20 for IERC20;
+    using SafeERC20 for IVault;
 
     struct StrategyConf {
 	    IStrategy Strat;
@@ -24,7 +30,7 @@ contract StrategistProfiter is Ownable {
     address constant uniRouter = 0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D;
     address constant sushiRouter = 0xd9e1cE17f2641f24aE83637ab66a2cca9C378B9F;
 
-    IWETH9 iWETH = IWETH9(WETH);
+    IWETH9 constant iWETH = IWETH9(WETH);
     ISharer constant sharer = ISharer(0x2C641e14AfEcb16b4Aa6601A40EE60c3cc792f7D);
 
     event Cloned(address payable newDeploy);
@@ -55,6 +61,14 @@ contract StrategistProfiter is Ownable {
         );
 
         emit Cloned(newProfiter);
+    }
+
+    function getStrategies() external view returns (StrategyConf[] memory) {
+        return strategies;
+    }
+
+    function removeStrat(uint index) external onlyOwner {
+        delete strategies[index];
     }
 
     function getTokenOutPath(address _token_in,address _token_out ) internal pure returns (address [] memory path) {
@@ -91,27 +105,27 @@ contract StrategistProfiter is Ownable {
             //Call dist to get the vault tokens
             sharer.distribute(address(strategies[i].Strat));
             //Call transfer from msg.sender
-            strategies[i].vault.transferFrom(msg.sender, address(this), strategies[i].vault.balanceOf(msg.sender));
+            strategies[i].vault.safeTransferFrom(msg.sender, address(this), strategies[i].vault.balanceOf(msg.sender));
             //Withdraw tokens to want
             strategies[i].vault.withdraw();
             sellToWETH(strategies[i].want,strategies[i].sellTo,strategies[i].sellViaSushi);
         }
         uint wethbal = iWETH.balanceOf(address(this));
         if(wethbal > 0) iWETH.withdraw(wethbal);
-        payable(msg.sender).transfer(wethbal);
+        msg.sender.sendValue(wethbal);
     }
 
     function sellToWETH(IERC20 _want,IERC20 _sellTo,bool _useSushi) internal {
         IUniswapRouter routerTouse = _useSushi ? IUniswapRouter(sushiRouter)  :  IUniswapRouter(uniRouter);
         uint sellAmount = _want.balanceOf(address(this));
         //First approve to spend want
-        _want.approve(address(routerTouse),sellAmount);
+        _want.safeApprove(address(routerTouse),sellAmount);
         //Swap to sellto via path
         routerTouse.swapExactTokensForTokens(sellAmount, 0, getTokenOutPath(address(_want),address(_sellTo)), address(this), block.timestamp);
     }
 
     function retrieveETH() external onlyOwner {
-        payable(owner()).transfer(address(this).balance);
+        msg.sender.sendValue(address(this).balance);
     }
 
     function retreiveToken(address token) external onlyOwner {
