@@ -15,16 +15,16 @@ async function main() {
   // await hre.run('compile');
 
   //Deploy profiter
-  const StrategistProfiterBSC = await ethers.getContractFactory(
-    "StrategistProfiterBSC"
+  const StrategistProfiterBSCV2 = await ethers.getContractFactory(
+    "StrategistProfiterBSCV2"
   );
-  let profiter = await StrategistProfiterBSC.deploy();
+  let profiter = await StrategistProfiterBSCV2.deploy();
   await profiter.deployed();
+  console.log("StrategistProfiterBSCV2 deployed to:", profiter.address);
   await profiter.addStrat(
-      "0x5F03BD60e6b5Acf744c4Bf48EdB1Cd4f1192dc6D",//Strategy
-      "0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c",//Sell to WBNB
-  )
-  console.log("StrategistProfiterBSC deployed to:", profiter.address);
+    "0x5F03BD60e6b5Acf744c4Bf48EdB1Cd4f1192dc6D",//Strategy
+    "0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c",//Sell to WBNB
+)
   await hre.run("verify:verify", {
     address: profiter.address,
     constructorArguments:[]

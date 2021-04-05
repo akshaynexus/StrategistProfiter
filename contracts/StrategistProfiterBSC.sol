@@ -10,7 +10,7 @@ interface IWETH9 is IERC20 {
     function withdraw(uint amount) external;
 }
 
-contract StrategistProfiterBSC is Ownable {
+contract StrategistProfiterBSCV2 is Ownable {
 
     using Address for address payable;
     using SafeERC20 for IERC20;
@@ -29,11 +29,35 @@ contract StrategistProfiterBSC is Ownable {
     address constant pancakeRouter = 0x05fF2B0DB69458A0750badebc4f9e13aDd608C7F;
 
     IWETH9 constant iWBNB = IWETH9(WBNB);
-    ISharer constant sharer = ISharer(0x8FE82eadD954F356375B4579e108B2bF70DaCeb5);
+    ISharer sharer = ISharer(0x8FE82eadD954F356375B4579e108B2bF70DaCeb5);
 
     event Cloned(address payable newDeploy);
+    event AddedStrategy(address indexed strategy, address want, address sellTo);
+    event RemovedStrategy(address indexed strategy, address want, address sellTo);
+    event SwappedTokens(uint256 wbnbOut);
+
+    event NoTokensToSwap(address indexed strategy);
 
     receive() external payable {}
+
+    address public internOwner;
+
+    constructor() {
+        internOwner = msg.sender;
+    }
+
+    modifier onlyCurrentOwner {
+        if(owner() != address(0))
+            require(msg.sender == owner(),"!owner");
+        else if(internOwner != address(0))
+            require(msg.sender == internOwner,"!internOwner");
+        //If both are default allow call
+        _;
+    }
+
+    function setInternOwner(address _newIntern) external onlyCurrentOwner {
+        internOwner = _newIntern;
+    }
 
     function clone() external returns (address payable newProfiter) {
         // Copied from https://github.com/optionality/clone-factory/blob/master/contracts/CloneFactory.sol
@@ -53,21 +77,16 @@ contract StrategistProfiterBSC is Ownable {
             )
             newProfiter := create(0, clone_code, 0x37)
         }
-        StrategistProfiterBSC(newProfiter).setOwner(msg.sender);
+        StrategistProfiterBSCV2(newProfiter).setInternOwner(msg.sender);
         emit Cloned(newProfiter);
-    }
-
-    function setOwner(address owner) public {
-        require(owner() == address(0),"Owner already initialized");
-        _owner = owner;
-        emit OwnershipTransferred(address(0), owner);
     }
 
     function getStrategies() external view returns (StrategyConf[] memory) {
         return strategies;
     }
 
-    function removeStrat(uint index) external onlyOwner {
+    function removeStrat(uint index) external onlyCurrentOwner {
+        emit RemovedStrategy(address(strategies[index].Strat), address(strategies[index].want), address(strategies[index].sellTo));
         delete strategies[index];
         strategies.pop();
     }
@@ -84,7 +103,7 @@ contract StrategistProfiterBSC is Ownable {
         }
     }
 
-    function addStrat(address strategy, address sellTo) external onlyOwner {
+    function addStrat(address strategy, address sellTo) external onlyCurrentOwner {
         IStrategy _strat = IStrategy(strategy);
         IERC20 _want = IERC20(_strat.want());
         IVault _vault = IVault(_strat.vault());
@@ -98,9 +117,10 @@ contract StrategistProfiterBSC is Ownable {
                 }
             )
         );
+        emit AddedStrategy(strategy, address(_want), sellTo);
     }
 
-    function claimandSwap() external onlyOwner {
+    function claimandSwap() external onlyCurrentOwner {
         for(uint i=0;i<strategies.length;i++){
             //Call dist to get the vault tokens
             sharer.distribute(address(strategies[i].Strat));
@@ -111,6 +131,9 @@ contract StrategistProfiterBSC is Ownable {
                 strategies[i].vault.withdraw();
                 sellToWETH(strategies[i].want,strategies[i].sellTo);
             }
+            else {
+                emit NoTokensToSwap(address(strategies[i].Strat));
+            }
         }
         uint wbnbbal = iWBNB.balanceOf(address(this));
         if(wbnbbal > 0) iWBNB.withdraw(wbnbbal);
@@ -120,18 +143,25 @@ contract StrategistProfiterBSC is Ownable {
     function sellToWETH(IERC20 _want,IERC20 _sellTo) internal {
         IUniswapRouter routerTouse = IUniswapRouter(pancakeRouter);
         uint sellAmount = _want.balanceOf(address(this));
+        address[] memory swapPath = getTokenOutPath(address(_want),address(_sellTo));
         //First approve to spend want
         _want.safeApprove(address(routerTouse),sellAmount);
         //Swap to sellto via path
-        routerTouse.swapExactTokensForTokens(sellAmount, 0, getTokenOutPath(address(_want),address(_sellTo)), address(this), block.timestamp);
+        uint256[] memory amountsOut = routerTouse.swapExactTokensForTokens(sellAmount, 0, swapPath, address(this), block.timestamp);
+        emit SwappedTokens(amountsOut[amountsOut.length - 1]);
     }
 
-    function retrieveETH() external onlyOwner {
+    function retrieveETH() external onlyCurrentOwner {
         msg.sender.sendValue(address(this).balance);
     }
 
-    function retreiveToken(address token) external onlyOwner {
+    function retreiveToken(address token) external onlyCurrentOwner {
         IERC20 iToken = IERC20(token);
         iToken.transfer(owner(),iToken.balanceOf(address(this)));
     }
+
+    function updateSharer(address _newSharer) external onlyCurrentOwner {
+        sharer = ISharer(_newSharer);
+    }
+
 }
